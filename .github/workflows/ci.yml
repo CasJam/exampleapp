@@ -40,6 +40,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    environment: ci
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,7 +49,38 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: .ruby-version
-          bundler-cache: true
+          bundler-cache: false  # Disable cache to ensure fresh install with license
+
+      - name: Activate Instrumental Components license and install dependencies
+        timeout-minutes: 15
+        env:
+          IC_LICENSE_KEY: ${{ secrets.INSTRUMENTAL_COMPONENTS_LICENSE_KEY }}
+          IC_EMAIL: ${{ secrets.INSTRUMENTAL_COMPONENTS_EMAIL }}
+        run: |
+          if [ -n "$IC_LICENSE_KEY" ] && [ -n "$IC_EMAIL" ]; then
+            echo "🔧 Installing Instrumental Components base gem..."
+            gem install instrumental-components
+
+            echo "💾 Temporarily removing Gemfile.lock to prevent source conflicts..."
+            echo "   Reason: install-instrumental runs internal 'bundle install' which fails when"
+            echo "   Gemfile.lock points to old public gem source. Removing it allows clean resolution."
+            cp Gemfile.lock Gemfile.lock.backup
+            rm Gemfile.lock
+
+            echo "🔑 Activating IC license (no stack trace with clean dependency resolution)..."
+            ruby -S install-instrumental --license-key "$IC_LICENSE_KEY" --email "$IC_EMAIL"
+
+            echo "🔄 Restoring Gemfile.lock and updating to use newly accessible private gem source..."
+            mv Gemfile.lock.backup Gemfile.lock
+            bundle update instrumental-components-library
+
+            echo "⚡ Installing dependencies optimized for linting..."
+            bundle install --without test
+          else
+            echo "Warning: IC license not configured for CI - installing without IC gems"
+            bundle config set without 'development'
+            bundle install
+          fi
 
       - name: Lint code for consistent style
         run: bin/rubocop -f github
